@@ -42,7 +42,7 @@ st.sidebar.header("🔍 進階查詢條件")
 
 # 測站選擇
 stations = df_processed['locationName'].unique().tolist()
-selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations, default=["淡水", "花蓮"]) 
+selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations)
 
 # 月份選擇 (改為純勾選群組)
 st.sidebar.markdown("**📅 選擇月份**")
