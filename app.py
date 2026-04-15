@@ -57,7 +57,7 @@ st.sidebar.header("🔍 篩選條件")
 
 # 測站選擇 (預設全選，或只選您關注的六個)
 stations = df_processed['locationName'].unique().tolist()
-selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations, default=["淡水", "新竹", "外埔", "臺中港", "花蓮", "成功"]) # 預設帶入您關注的站點
+selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations)
 
 # 月份選擇
 months = sorted(df_processed['月份'].unique().tolist())
