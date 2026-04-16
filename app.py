@@ -26,10 +26,8 @@ def load_and_process_data():
     weekday_map = {0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日'}
     df['星期'] = df['obsTime'].dt.weekday.map(weekday_map)
     
-    # 只保留低潮資料 (L)
-    low_tide_df = df[df['高低潮'] == 'L'].copy()
-    
-    return low_tide_df
+    # 這次我們保留所有資料 (包含 H 和 L)，以供使用者自由切換
+    return df
 
 try:
     df_processed = load_and_process_data()
@@ -42,17 +40,15 @@ st.sidebar.header("🔍 進階查詢條件")
 
 # 測站選擇
 stations = df_processed['locationName'].unique().tolist()
-selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations)
+selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations, default=["淡水", "花蓮"]) 
 
-# 月份選擇 (改為純勾選群組)
+# 月份選擇
 st.sidebar.markdown("**📅 選擇月份**")
-# 使用 columns 排版，讓月份勾選框不會拉得太長
 col1, col2, col3, col4 = st.sidebar.columns(4)
 selected_months = []
 for m in range(1, 13):
-    # 依序分配到四個欄位
     with [col1, col2, col3, col4][(m-1) % 4]:
-        if st.checkbox(f"{m}月", value=True): # 預設全勾
+        if st.checkbox(f"{m}月", value=True):
             selected_months.append(m)
 
 # 時間區段選擇 (Slide bar)
@@ -60,67 +56,66 @@ st.sidebar.markdown("**☀️/🌙 選擇時間區間 (小時)**")
 start_hour, end_hour = st.sidebar.slider(
     "設定區間：", 
     min_value=0, max_value=24, 
-    value=(7, 18), # 預設 7~18
+    value=(7, 18),
     step=1
 )
 
-# 潮位等級門檻值 (Textbox)
-st.sidebar.markdown("**📉 低潮門檻值設定**")
-threshold = st.sidebar.number_input(
-    "請輸入數值 (例如 -100)：", 
-    value=-100, 
-    step=10
-)
+# ----------------- 新增：高/低潮類型切換與門檻值動態設定 -----------------
+st.sidebar.markdown("**📉/📈 潮位門檻值設定**")
+tide_filter_type = st.sidebar.radio("選擇篩選潮位類型：", ["高潮 (H)", "低潮 (L)"])
+
+# 根據選擇的類型，動態改變輸入框的預設值與提示文字
+if tide_filter_type == "高潮 (H)":
+    threshold = st.sidebar.number_input("輸入高潮門檻值 (將篩選「大於」此數值)：", value=100, step=10)
+    hl_mask = 'H'
+else:
+    threshold = st.sidebar.number_input("輸入低潮門檻值 (將篩選「小於」此數值)：", value=-100, step=10)
+    hl_mask = 'L'
+# ------------------------------------------------------------------------
 
 # 3. 根據篩選器過濾資料
+# 先過濾基本條件 (測站、月份、時間、高低潮標記)
 filtered_df = df_processed[
     (df_processed['locationName'].isin(selected_stations)) &
     (df_processed['月份'].isin(selected_months)) &
     (df_processed['小時'] >= start_hour) &
     (df_processed['小時'] <= end_hour) &
-    (df_processed['潮高(當地)'] < threshold) # 潮高低於輸入的門檻值
+    (df_processed['高低潮'] == hl_mask)
 ]
+
+# 再根據使用者選擇的高/低潮，套用對應的「大於」或「小於」門檻邏輯
+if tide_filter_type == "高潮 (H)":
+    filtered_df = filtered_df[filtered_df['潮高(當地)'] > threshold]
+else:
+    filtered_df = filtered_df[filtered_df['潮高(當地)'] < threshold]
 
 # 4. 準備顯示結果
 st.subheader(f"📊 查詢結果 (共 {len(filtered_df)} 筆符合條件)")
 
 if len(filtered_df) > 0:
-    # 定義顏色標記函數 (標記週末與國定假日)
     def highlight_holidays(row):
         date_obj = datetime.datetime.strptime(row['日期'], '%Y-%m-%d').date()
-        # 判斷是否為週六、週日，或是台灣國定假日
         if row['星期'] in ['週六', '週日'] or date_obj in tw_holidays:
-            # 假日整列標記為淺粉橘色 (您可以自己更改色碼)
             return ['background-color: rgba(255, 182, 193, 0.3)'] * len(row)
         else:
             return [''] * len(row)
 
-    # 如果有選取測站，則產生分頁 (Tabs)
     if selected_stations:
-        # 動態建立與測站數量相同的分頁
         tabs = st.tabs(selected_stations)
-        
         for idx, tab in enumerate(tabs):
             station_name = selected_stations[idx]
             with tab:
-                # 抓出該測站的資料
                 station_df = filtered_df[filtered_df['locationName'] == station_name]
-                
                 if len(station_df) > 0:
-                    # 整理要顯示的特定欄位
-                    display_df = station_df[['日期', '星期', '時間', '潮高(當地)']].copy()
-                    
-                    # 套用 Pandas Styler 進行顏色渲染，並隱藏 Index
+                    # 為了方便辨識，在表格中顯示出該筆資料是 H 還是 L
+                    display_df = station_df[['日期', '星期', '時間', '高低潮', '潮高(當地)']].copy()
                     styled_df = display_df.style.apply(highlight_holidays, axis=1)
-                    
-                    # 顯示資料表
                     st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 else:
                     st.info(f"{station_name} 在此條件下查無資料。")
     else:
         st.warning("請在左側選單選擇至少一個測站。")
 else:
-    st.warning("查無符合條件的資料，請嘗試放寬時間區間、月份，或調高門檻值。")
+    st.warning("查無符合條件的資料，請嘗試放寬時間區間、月份，或調整門檻值。")
 
-# 補充說明
 st.info("💡 **顏色說明**：有**底色標記**之日期代表為週末（週六/週日）或 2026 年台灣國定假日。")
