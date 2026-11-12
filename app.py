@@ -5,35 +5,41 @@ import holidays
 
 # 網頁標題與設定
 st.set_page_config(page_title="台灣潮汐進階查詢系統", layout="wide")
-st.title("🌊 台灣沿海測站潮汐查詢系統 (支援 2026-2027)")
+st.title("🌊 台灣沿海測站潮汐查詢系統 (2026-2027)")
 
-# 取得 2026 與 2027 年台灣國定假日清單
+# 取得台灣國定假日清單 (涵蓋 2026 與 2027)
 tw_holidays_2026 = holidays.country_holidays('TW', years=2026)
 tw_holidays_2027 = holidays.country_holidays('TW', years=2027)
 tw_holidays = tw_holidays_2026 + tw_holidays_2027
 
-# 1. 讀取並合併 2026 與 2027 的資料
+# 1. 讀取並快取兩年資料
 @st.cache_data
 def load_and_process_data():
-    # 讀取兩年份的檔案 (請確保這兩個檔案都在資料夾中)
+    dfs = []
+    
+    # 嘗試讀取 2026 資料
     try:
-        df_2026 = pd.read_csv('F-A0023-001.csv') # 您的 2026 原檔名
+        df_26 = pd.read_csv('F-A0023-001.csv')
+        dfs.append(df_26)
     except FileNotFoundError:
-        st.error("找不到 2026 年資料 `F-A0023-001.csv`")
+        st.warning("提醒：未找到 2026 年資料檔 (F-A0023-001.csv)")
+
+    # 嘗試讀取 2027 資料
+    try:
+        df_27 = pd.read_csv('F-A0023-001_2027.csv')
+        dfs.append(df_27)
+    except FileNotFoundError:
+        st.warning("提醒：未找到 2027 年資料檔 (F-A0023-001_2027.csv)")
+
+    if not dfs:
+        st.error("錯誤：請至少提供一年份的 CSV 資料檔案！")
         st.stop()
         
-    try:
-        df_2027 = pd.read_csv('F-A0023-001_2027.csv') # 剛剛轉換出來的 2027 檔名
-    except FileNotFoundError:
-        st.error("找不到 2027 年資料 `F-A0023-001_2027.csv`")
-        st.stop()
-        
-    # 合併兩年資料
-    df = pd.concat([df_2026, df_2027], ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
     
     # 時間與日期處理
     df['obsTime'] = pd.to_datetime(df['obsTime'])
-    df['年份'] = df['obsTime'].dt.year       # 新增年份欄位
+    df['年份'] = df['obsTime'].dt.year
     df['月份'] = df['obsTime'].dt.month
     df['日期'] = df['obsTime'].dt.strftime('%Y-%m-%d')
     df['小時'] = df['obsTime'].dt.hour
@@ -50,13 +56,16 @@ df_processed = load_and_process_data()
 # 2. 建立側邊欄篩選器 (Sidebar)
 st.sidebar.header("🔍 進階查詢條件")
 
-# 年份選擇 (新增)
-years = df_processed['年份'].unique().tolist()
+# 年份選擇 (動態抓取資料中有的年份)
+years = sorted(df_processed['年份'].unique().tolist())
 selected_years = st.sidebar.multiselect("📆 選擇年份", years, default=years)
 
 # 測站選擇
-stations = df_processed['locationName'].unique().tolist()
-selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations, default=["淡海潮位站", "花蓮潮位站"]) 
+# 為了相容 2026 與 2027 (測站名稱可能略有不同，例如"潮位站"字眼)，自動抓取所有唯一站名
+stations = sorted(df_processed['locationName'].unique().tolist())
+# 預設選取前兩個避免一開始畫面空空
+default_stations = stations[:2] if len(stations) >= 2 else stations
+selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations, default=default_stations) 
 
 # 月份選擇
 st.sidebar.markdown("**📅 選擇月份**")
@@ -67,7 +76,7 @@ for m in range(1, 13):
         if st.checkbox(f"{m}月", value=True):
             selected_months.append(m)
 
-# 時間區段選擇 (Slide bar)
+# 時間區段選擇
 st.sidebar.markdown("**☀️/🌙 選擇時間區間 (小時)**")
 start_hour, end_hour = st.sidebar.slider(
     "設定區間：", 
@@ -120,7 +129,7 @@ if len(filtered_df) > 0:
             with tab:
                 station_df = filtered_df[filtered_df['locationName'] == station_name]
                 if len(station_df) > 0:
-                    display_df = station_df[['日期', '星期', '時間', '高低潮', '潮高(當地)']].copy()
+                    display_df = station_df[['年份', '日期', '星期', '時間', '高低潮', '潮高(當地)']].copy()
                     styled_df = display_df.style.apply(highlight_holidays, axis=1)
                     st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 else:
@@ -130,4 +139,4 @@ if len(filtered_df) > 0:
 else:
     st.warning("查無符合條件的資料，請嘗試放寬時間區間、月份，或調整門檻值。")
 
-st.info("💡 **顏色說明**：有**底色標記**之日期代表為週末（週六/週日）或 2026/2027 年台灣國定假日。")
+st.info("💡 **顏色說明**：有**底色標記**之日期代表為週末（週六/週日）或 2026/2027 台灣國定假日。")
