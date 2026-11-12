@@ -5,18 +5,35 @@ import holidays
 
 # 網頁標題與設定
 st.set_page_config(page_title="台灣潮汐進階查詢系統", layout="wide")
-st.title("🌊 台灣沿海測站潮汐查詢系統 (2026年預報)")
+st.title("🌊 台灣沿海測站潮汐查詢系統 (支援 2026-2027)")
 
-# 取得 2026 年台灣國定假日清單
-tw_holidays = holidays.country_holidays('TW', years=2026)
+# 取得 2026 與 2027 年台灣國定假日清單
+tw_holidays_2026 = holidays.country_holidays('TW', years=2026)
+tw_holidays_2027 = holidays.country_holidays('TW', years=2027)
+tw_holidays = tw_holidays_2026 + tw_holidays_2027
 
-# 1. 讀取並快取資料
+# 1. 讀取並合併 2026 與 2027 的資料
 @st.cache_data
 def load_and_process_data():
-    df = pd.read_csv('F-A0023-001.csv')
+    # 讀取兩年份的檔案 (請確保這兩個檔案都在資料夾中)
+    try:
+        df_2026 = pd.read_csv('F-A0023-001.csv') # 您的 2026 原檔名
+    except FileNotFoundError:
+        st.error("找不到 2026 年資料 `F-A0023-001.csv`")
+        st.stop()
+        
+    try:
+        df_2027 = pd.read_csv('F-A0023-001_2027.csv') # 剛剛轉換出來的 2027 檔名
+    except FileNotFoundError:
+        st.error("找不到 2027 年資料 `F-A0023-001_2027.csv`")
+        st.stop()
+        
+    # 合併兩年資料
+    df = pd.concat([df_2026, df_2027], ignore_index=True)
     
     # 時間與日期處理
     df['obsTime'] = pd.to_datetime(df['obsTime'])
+    df['年份'] = df['obsTime'].dt.year       # 新增年份欄位
     df['月份'] = df['obsTime'].dt.month
     df['日期'] = df['obsTime'].dt.strftime('%Y-%m-%d')
     df['小時'] = df['obsTime'].dt.hour
@@ -26,21 +43,20 @@ def load_and_process_data():
     weekday_map = {0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日'}
     df['星期'] = df['obsTime'].dt.weekday.map(weekday_map)
     
-    # 這次我們保留所有資料 (包含 H 和 L)，以供使用者自由切換
     return df
 
-try:
-    df_processed = load_and_process_data()
-except FileNotFoundError:
-    st.error("找不到 `F-A0023-001.csv`，請確保檔案路徑正確。")
-    st.stop()
+df_processed = load_and_process_data()
 
 # 2. 建立側邊欄篩選器 (Sidebar)
 st.sidebar.header("🔍 進階查詢條件")
 
+# 年份選擇 (新增)
+years = df_processed['年份'].unique().tolist()
+selected_years = st.sidebar.multiselect("📆 選擇年份", years, default=years)
+
 # 測站選擇
 stations = df_processed['locationName'].unique().tolist()
-selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations)
+selected_stations = st.sidebar.multiselect("📍 選擇潮汐站", stations, default=["淡海潮位站", "花蓮潮位站"]) 
 
 # 月份選擇
 st.sidebar.markdown("**📅 選擇月份**")
@@ -60,22 +76,20 @@ start_hour, end_hour = st.sidebar.slider(
     step=1
 )
 
-# ----------------- 新增：高/低潮類型切換與門檻值動態設定 -----------------
+# 潮位門檻值設定
 st.sidebar.markdown("**📉/📈 潮位門檻值設定**")
 tide_filter_type = st.sidebar.radio("選擇篩選潮位類型：", ["高潮 (H)", "低潮 (L)"])
 
-# 根據選擇的類型，動態改變輸入框的預設值與提示文字
 if tide_filter_type == "高潮 (H)":
     threshold = st.sidebar.number_input("輸入高潮門檻值 (將篩選「大於」此數值)：", value=100, step=10)
     hl_mask = 'H'
 else:
     threshold = st.sidebar.number_input("輸入低潮門檻值 (將篩選「小於」此數值)：", value=-100, step=10)
     hl_mask = 'L'
-# ------------------------------------------------------------------------
 
 # 3. 根據篩選器過濾資料
-# 先過濾基本條件 (測站、月份、時間、高低潮標記)
 filtered_df = df_processed[
+    (df_processed['年份'].isin(selected_years)) &
     (df_processed['locationName'].isin(selected_stations)) &
     (df_processed['月份'].isin(selected_months)) &
     (df_processed['小時'] >= start_hour) &
@@ -83,7 +97,6 @@ filtered_df = df_processed[
     (df_processed['高低潮'] == hl_mask)
 ]
 
-# 再根據使用者選擇的高/低潮，套用對應的「大於」或「小於」門檻邏輯
 if tide_filter_type == "高潮 (H)":
     filtered_df = filtered_df[filtered_df['潮高(當地)'] > threshold]
 else:
@@ -107,7 +120,6 @@ if len(filtered_df) > 0:
             with tab:
                 station_df = filtered_df[filtered_df['locationName'] == station_name]
                 if len(station_df) > 0:
-                    # 為了方便辨識，在表格中顯示出該筆資料是 H 還是 L
                     display_df = station_df[['日期', '星期', '時間', '高低潮', '潮高(當地)']].copy()
                     styled_df = display_df.style.apply(highlight_holidays, axis=1)
                     st.dataframe(styled_df, use_container_width=True, hide_index=True)
@@ -118,4 +130,4 @@ if len(filtered_df) > 0:
 else:
     st.warning("查無符合條件的資料，請嘗試放寬時間區間、月份，或調整門檻值。")
 
-st.info("💡 **顏色說明**：有**底色標記**之日期代表為週末（週六/週日）或 2026 年台灣國定假日。")
+st.info("💡 **顏色說明**：有**底色標記**之日期代表為週末（週六/週日）或 2026/2027 年台灣國定假日。")
